@@ -24,15 +24,9 @@ default_repo_destination = "profiles"
 def main():
     usage = "%prog [options] path/to/mobileconfig/file"
     o = optparse.OptionParser(usage=usage)
-    o.add_option("-t", "--install-time", default="immediate",
-        help=("Either 'immediate' or 'nextboot'. If set to 'immediate', "
-              "profile will be installed at '--installed-path' and 'profiles' "
-              "will install it immediately. If set to "
-              "'nextboot', profile is installed to /private/var/db/"
-              "ConfigurationProfiles/Setup for automatic installation on "
-              "the next boot, the .profileSetupDone flag "
-              "file is removed and the package is marked as requiring "
-              "a restart. Defaults to 'immediate'."))
+    o.add_option("-m", "--munki-import", action="store_true",
+        default=False,
+        help=("Import resulting package into Munki. "))
     o.add_option("-f", "--format-name", default=default_name_format_string,
         metavar="FORMAT-STRING",
         help=("A format string specifying the desired pkginfo item name, which "
@@ -76,16 +70,6 @@ def main():
             sys.exit("A required exeuctable, %s could not be found "
                      "or is not executable!" % executable)
 
-    if opts.install_time not in ["immediate", "nextboot"]:
-        sys.exit("--install-time must be either 'immediate' or 'nextboot'!")
-
-
-    if opts.install_time == "nextboot" and \
-        opts.installed_path != default_installed_path:
-        print >> sys.stderr, (
-            "WARNING: --installed-path option ignored when --install-time "
-            "is nextboot!")
-
     # Grab the profile's identifier for use later in the pkginfo's uninstall_script
     try:
         pdata = plistlib.readPlist(profile_path)
@@ -116,11 +100,9 @@ def main():
     # Installer package-related
     pkg_filename = "%s-%s.pkg" % (item_name, version)
     pkg_identifier = "%s.%s" % (opts.pkg_prefix, item_name)
-    pkg_output_path = os.path.join(tempfile.mkdtemp(), pkg_filename)
-
-    # -- payload
-    if opts.install_time == "nextboot":
-        opts.installed_path = "/private/var/db/ConfigurationProfiles/Setup"
+    
+    pkg_output_path = os.path.join(os.getcwd(), pkg_filename)
+    
     root = tempfile.mkdtemp()
     pkg_payload_destination = os.path.join(root, opts.installed_path.lstrip("/"))
     profile_installed_path = os.path.join(
@@ -132,18 +114,16 @@ def main():
     script_root = tempfile.mkdtemp()
     script_path = os.path.join(script_root, "postinstall")
 
-    if opts.install_time == "nextboot":
-        install_script = """#!/bin/sh
-PROFILES_DONE="${3}/private/var/db/ConfigurationProfiles/Setup/.profileSetupDone"
-if [ -e "${PROFILES_DONE}" ]; then
-  rm "${PROFILES_DONE}"
+    config_profile = profile_name + '.mobileconfig'
+    install_script = """#!/bin/sh
+if [ "$3" == "/" ] ; then
+    /usr/bin/profiles -I -F %s
+else
+    /bin/mkdir -p "$3/private/var/db/ConfigurationProfiles/Setup"
+    /bin/cp "$3%s" "$3/private/var/db/ConfigurationProfiles/Setup/%s"
+    /bin/rm -f $3/private/var/db/ConfigurationProfiles/Setup/.profileSetupDone
 fi
-"""
-    else:
-        install_script = """#!/bin/sh
-
-/usr/bin/profiles -I -F %s
-""" % profile_installed_path
+""" % (profile_installed_path, profile_installed_path, config_profile)
     if opts.delete_after_install:
         install_script += "\n/bin/rm -f %s" % profile_installed_path
     with open(script_path, "w") as fd:
@@ -153,8 +133,6 @@ fi
     # -- PackageInfo template
     info_template_path = tempfile.mkstemp()[1]
     info = "<pkg-info "
-    if opts.install_time == "nextboot":
-        info += "postinstall-action=\"restart\""
     info += "></pkg-info>"
     with open(info_template_path, "w") as fd:
         fd.write(info)
@@ -182,14 +160,15 @@ fi
         fd.write(uninstall_script)
 
     # -- import it
-    subprocess.call([
-        munkiimport,
-        "--nointeractive",
-        "--subdirectory", opts.munki_repo_destination,
-        "--uninstall-script", uninstall_script_path,
-        pkg_output_path
-        ]
-    )
+    if opts.munki_import:
+        subprocess.call([
+            munkiimport,
+            "--nointeractive",
+            "--subdirectory", opts.munki_repo_destination,
+            "--uninstall-script", uninstall_script_path,
+            pkg_output_path
+            ]
+        )
 
 if __name__ == '__main__':
     main()
