@@ -166,6 +166,13 @@ def main():
         additional_opts += "-U %s" % opts.username
 
     install_script = """#!/bin/sh
+    networksetup -removepreferredwirelessnetwork en0 "Addepar"
+    networksetup -removepreferredwirelessnetwork en0 "addepar"
+    networksetup -removepreferredwirelessnetwork en0 "Addepar_Guest"
+    networksetup -setairportpower en0 off
+    security delete-generic-password -l Addepar "/Library/Keychains/System.keychain"
+    security delete-generic-password -l Addepar_Guest "/Library/Keychains/System.keychain"
+    networksetup -setairportpower en0 on
 if [ "$3" = "/" ] ; then
     /usr/bin/profiles -I -F %s %s
 else
